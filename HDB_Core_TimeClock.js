@@ -489,6 +489,30 @@
             };
         }
 
+        // Add helper method for calculating days since a specific point
+        getDaysSince(startDay, startSeason, startYear) {
+            const currentTotalDays = (this.currentYear - 1) * (this.seasonLength * 4) + 
+                                   (this.currentSeason * this.seasonLength) + 
+                                   this.currentDay;
+            
+            const startTotalDays = (startYear - 1) * (this.seasonLength * 4) + 
+                                  (startSeason * this.seasonLength) + 
+                                  startDay;
+            
+            const daysSince = currentTotalDays - startTotalDays;
+            
+            this.logger.debug('Days Since Calculation', {
+                startDay,
+                startSeason,
+                startYear,
+                currentTotalDays,
+                startTotalDays,
+                daysSince
+            });
+            
+            return daysSince;
+        }
+
         addTimeUpdateListener(callback) {
             this.onTimeUpdate.add(callback);
         }
