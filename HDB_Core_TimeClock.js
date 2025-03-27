@@ -15,6 +15,25 @@
  * @desc Number of real-world minutes that should pass for one in-game day (15 = 15 real minutes per game day)
  * @default 15
  * 
+ * @param Time Limits
+ * @text Time Limit Configuration
+ * 
+ * @param dayEndHour
+ * @parent Time Limits
+ * @type number
+ * @min 0
+ * @max 23
+ * @desc Hour when time stops (24-hour format)
+ * @default 23
+ * 
+ * @param dayStartHour
+ * @parent Time Limits
+ * @type number
+ * @min 0
+ * @max 23
+ * @desc Hour when new day starts after sleeping (24-hour format)
+ * @default 6
+ * 
  * @param Calendar Settings
  * @text Calendar Configuration
  * 
@@ -177,6 +196,11 @@
             // real seconds per day = realMinutesPerGameDay * 60
             this.timeMultiplier = 1440 / (realMinutesPerGameDay * 60);
             
+            // Load time limit parameters
+            this.dayEndHour = Number(params.dayEndHour || 23);
+            this.dayStartHour = Number(params.dayStartHour || 6);
+            this.isTimePaused = false;
+            
             console.log('Time multiplier calculation:', {
                 rawValue: rawRealMinutesPerGameDay,
                 parsedValue: realMinutesPerGameDay,
@@ -196,6 +220,8 @@
             this.logger.info('Time System Parameters', {
                 realMinutesPerGameDay,
                 timeMultiplier: this.timeMultiplier,
+                dayEndHour: this.dayEndHour,
+                dayStartHour: this.dayStartHour,
                 seasonLength: this.seasonLength,
                 startingSeason: this.startingSeason,
                 startingYear: this.startingYear,
@@ -233,7 +259,9 @@
             
             // Only update if we have waited at least 1 second since last update
             // and we're not in a menu or battle
-            if (realTimeDiff >= 1000 && !this.isGamePaused()) {
+            // and we're not at the time limit
+            // and time isn't paused
+            if (realTimeDiff >= 1000 && !this.isGamePaused() && !this.isAtTimeLimit() && !this.isTimePaused) {
                 // Calculate game minutes based on real time difference using timeMultiplier
                 const newMinutes = (realTimeDiff / 1000) * this.timeMultiplier;
                 this.accumulatedMinutes += newMinutes;
@@ -508,6 +536,60 @@
                    SceneManager._scene instanceof Scene_Gameover ||
                    SceneManager._scene instanceof Scene_Title ||
                    SceneManager._scene instanceof Scene_Battle;
+        }
+
+        isAtTimeLimit() {
+            const currentHour = Math.floor((this.currentTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR);
+            return currentHour >= this.dayEndHour;
+        }
+
+        pauseTime() {
+            this.isTimePaused = true;
+            this.logger.info('Time paused', { 
+                currentTime: this.currentTime,
+                currentHour: Math.floor((this.currentTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR)
+            });
+        }
+
+        resumeTime() {
+            this.isTimePaused = false;
+            this.logger.info('Time resumed');
+        }
+
+        sleepUntilNextDay() {
+            // Calculate current hour and minutes into the day
+            const minutesPerDay = HOURS_PER_DAY * MINUTES_PER_HOUR;
+            const currentDayMinutes = this.currentTime % minutesPerDay;
+            const currentHour = Math.floor(currentDayMinutes / MINUTES_PER_HOUR);
+
+            // Calculate minutes until next day at start hour
+            const minutesToNextDay = (minutesPerDay - currentDayMinutes) + (this.dayStartHour * MINUTES_PER_HOUR);
+
+            // Advance time
+            this.currentTime += minutesToNextDay;
+            this.lastUpdateTime = Date.now();
+            this.accumulatedMinutes = 0;
+
+            // Update day/season/year
+            const totalMinutes = this.currentTime;
+            this.currentDay = Math.floor(totalMinutes / minutesPerDay) + 1;
+            this.currentSeason = Math.floor((totalMinutes % (minutesPerDay * this.seasonLength * 4)) / (minutesPerDay * this.seasonLength));
+            this.currentYear = Math.floor(totalMinutes / (minutesPerDay * this.seasonLength * 4)) + this.startingYear;
+
+            // Resume time
+            this.resumeTime();
+
+            this.logger.info('Slept until next day', {
+                minutesAdvanced: minutesToNextDay,
+                newDay: this.currentDay,
+                newHour: this.dayStartHour,
+                newSeason: this.currentSeason,
+                newYear: this.currentYear
+            });
+
+            // Emit events
+            this.handleDayChange();
+            this.emitTimeUpdate();
         }
     }
 
