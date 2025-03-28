@@ -59,28 +59,34 @@
             this.minLevel = LOG_LEVELS[this.params['Log Level'] || 'INFO'];
             this.enabledPlugins = (this.params['Enable Plugin Filters'] || '').split(',').map(p => p.trim());
             
+            // Get plugin-specific log level from plugin parameters
+            const pluginParams = PluginManager.parameters(pluginName);
+            if (pluginParams && pluginParams.logLevel) {
+                this.minLevel = LOG_LEVELS[pluginParams.logLevel] || this.minLevel;
+            }
+            
             // Debug log to verify logger creation
             console.log(`Logger created for plugin: ${pluginName}`, {
                 params: this.params,
                 minLevel: this.minLevel,
-                enabledPlugins: this.enabledPlugins
+                enabledPlugins: this.enabledPlugins,
+                pluginParams: pluginParams
             });
         }
 
-        shouldLog(pluginName, level) {
-            // Only log INFO and above by default
-            if (level < LOG_LEVELS.INFO) return false;
-            
-            // Allow all plugins to log for now
-            return true;
-            
-            // Original logic commented out for debugging
-            /*
-            if (!this.params['Enable Console Logging']) return false;
-            if (level < this.minLevel) return false;
-            if (this.enabledPlugins.length && !this.enabledPlugins.includes(pluginName)) return false;
-            return true;
-            */
+        setLogLevel(level) {
+            if (LOG_LEVELS[level] !== undefined) {
+                this.minLevel = LOG_LEVELS[level];
+                console.log(`Log level set to ${level} for plugin ${this.pluginName}`);
+            }
+        }
+
+        shouldLog(level) {
+            // Check if plugin is in enabled list (if list is not empty)
+            if (this.enabledPlugins.length > 0 && !this.enabledPlugins.includes(this.pluginName)) {
+                return false;
+            }
+            return level >= this.minLevel;
         }
 
         formatMessage(level, message, data) {
@@ -90,7 +96,7 @@
         }
 
         log(level, message, data) {
-            if (!this.shouldLog(this.pluginName, LOG_LEVELS[level])) return;
+            if (!this.shouldLog(level)) return;
 
             const formattedMessage = this.formatMessage(level, message, data);
             
@@ -139,19 +145,46 @@
             }
         }
 
-        debug(message, data) { this.log('DEBUG', message, data); }
-        info(message, data) { this.log('INFO', message, data); }
-        warn(message, data) { this.log('WARN', message, data); }
-        error(message, data) { this.log('ERROR', message, data); }
+        debug(message, data) {
+            if (this.shouldLog(LOG_LEVELS.DEBUG)) {
+                const formattedMessage = this.formatMessage('DEBUG', message, data);
+                console.debug(formattedMessage);
+                this.storeLogs(LOG_LEVELS.DEBUG, message, data);
+            }
+        }
+
+        info(message, data) {
+            if (this.shouldLog(LOG_LEVELS.INFO)) {
+                const formattedMessage = this.formatMessage('INFO', message, data);
+                console.info(formattedMessage);
+                this.storeLogs(LOG_LEVELS.INFO, message, data);
+            }
+        }
+
+        warn(message, data) {
+            if (this.shouldLog(LOG_LEVELS.WARN)) {
+                const formattedMessage = this.formatMessage('WARN', message, data);
+                console.warn(formattedMessage);
+                this.storeLogs(LOG_LEVELS.WARN, message, data);
+            }
+        }
+
+        error(message, data) {
+            if (this.shouldLog(LOG_LEVELS.ERROR)) {
+                const formattedMessage = this.formatMessage('ERROR', message, data);
+                console.error(formattedMessage);
+                this.storeLogs(LOG_LEVELS.ERROR, message, data);
+            }
+        }
 
         group(label) {
-            if (this.shouldLog(this.pluginName, LOG_LEVELS.DEBUG)) {
+            if (this.shouldLog(LOG_LEVELS.DEBUG)) {
                 console.group(`[${this.pluginName}] ${label}`);
             }
         }
 
         groupEnd() {
-            if (this.shouldLog(this.pluginName, LOG_LEVELS.DEBUG)) {
+            if (this.shouldLog(LOG_LEVELS.DEBUG)) {
                 console.groupEnd();
             }
         }

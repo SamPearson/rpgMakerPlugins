@@ -139,27 +139,36 @@
         INDOOR_DARK: [-51, -51, -51, 51]
     };
 
+    // Create a single logger instance for the time display
+    let timeDisplayLogger = null;
+
     // Time Display Window Class
     class Window_TimeDisplay extends Window_Base {
         constructor() {
+            // Prevent multiple instances
+            if (Window_TimeDisplay.instance) {
+                return Window_TimeDisplay.instance;
+            }
+
+            // Initialize logger if not already done
+            if (!timeDisplayLogger && window.HDB_Logger) {
+                timeDisplayLogger = window.HDB_Logger.forPlugin('HDB_TimeClock_Display');
+            }
+
             // Get plugin parameters first
             const params = PluginManager.parameters('HDB_TimeClock_Display');
             const size = JSON.parse(params['Window Size'] || '{"width":"350","height":"auto"}');
             
             // Calculate size
-            // We'll calculate the actual width based on text content in refresh()
             const height = size.height === 'auto' ? 60 : Number(size.height);
             
             // Calculate top right position
-            const padding = 10; // Padding from screen edges
-            const x = Graphics.width - padding; // We'll adjust this after calculating width
+            const padding = 10;
+            const x = Graphics.width - padding;
             const y = padding;
 
             // Call super constructor with temporary width
             super(x, y, 100, height);
-            
-            // Now we can use this for logging
-            this.logger = window.HDB_Logger.forPlugin('HDB_TimeClock_Display');
             
             // Store parameters for later use
             this.size = size;
@@ -178,13 +187,39 @@
             
             // Initialize update tracking
             this.lastUpdateTime = Date.now();
-            this._updateInterval = 1000; // Update every 1000ms (1 second)
+            this._updateInterval = 1000;
             
             // Initial refresh to calculate proper width
             this.refresh();
             
             // Adjust window position based on calculated width
             this.x = Graphics.width - this.width - padding;
+
+            // Set the instance
+            Window_TimeDisplay.instance = this;
+
+            // Log window creation
+            if (timeDisplayLogger) {
+                timeDisplayLogger.info('Time display window created', {
+                    x: this.x,
+                    y: this.y,
+                    width: this.width,
+                    height: this.height
+                });
+            }
+        }
+
+        static getInstance() {
+            if (!Window_TimeDisplay.instance) {
+                if (Window_TimeDisplay.isInitializing) {
+                    console.warn('TimeDisplay initialization already in progress');
+                    return null;
+                }
+                Window_TimeDisplay.isInitializing = true;
+                Window_TimeDisplay.instance = new Window_TimeDisplay();
+                Window_TimeDisplay.isInitializing = false;
+            }
+            return Window_TimeDisplay.instance;
         }
 
         update() {
@@ -195,18 +230,20 @@
             // Only update if we've waited at least 1000ms since the last update
             if (timeSinceLastUpdate >= 1000) {
                 // Force a refresh of the time data
-                if ($gameHDB && $gameHDB.time) {
+                if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
                     $gameHDB.time.update();
                 }
                 this.refresh();
                 this.lastUpdateTime = now;
                 
                 // Log the update timing
-                this.logger.debug('Time display update', {
-                    timeSinceLastUpdate,
-                    lastUpdateTime: this.lastUpdateTime,
-                    now: now
-                });
+                if (timeDisplayLogger) {
+                    timeDisplayLogger.debug('Time display update', {
+                        timeSinceLastUpdate,
+                        lastUpdateTime: this.lastUpdateTime,
+                        now: now
+                    });
+                }
             }
         }
 
@@ -218,7 +255,7 @@
             this.contents.fontSize = 24;
             const textWidth = this.textWidth(timeString);
             const outlinePadding = this.contents.outlineWidth * 2;
-            const fixedPadding = 30; // needs some padding to the right to avoid cutting off the text
+            const fixedPadding = 75;
             const totalWidth = textWidth + outlinePadding + fixedPadding;
             
             // Resize window if needed
@@ -227,42 +264,23 @@
                 this.createContents();
             }
             
-            // Log the time string being drawn
-            this.logger.info('Refreshing time display', {
-                timeString,
-                textWidth,
-                outlinePadding,
-                fixedPadding,
-                totalWidth,
-                windowWidth: this.width,
-                windowHeight: this.height,
-                x: this.x,
-                y: this.y,
-                parent: this.parent ? 'Scene_Map' : 'none'
-            });
-            
-            // Draw text with a larger font size and more visible color
-            this.contents.fontSize = 24;
-            this.contents.textColor = '#ffffff';
-            this.contents.outlineColor = '#000000';
-            this.contents.outlineWidth = 6;
-            
             // Draw text with horizontal centering and adjusted vertical position
-            // Move text up by using a negative y offset
             this.drawText(timeString, 0, -5, this.width, this.height, 'center');
             
             // Log the window's current state
-            this.logger.info('Window state after refresh', {
-                visible: this.visible,
-                active: this.active,
-                opacity: this.opacity,
-                backOpacity: this.backOpacity,
-                x: this.x,
-                y: this.y,
-                width: this.width,
-                height: this.height,
-                parent: this.parent ? 'Scene_Map' : 'none'
-            });
+            if (timeDisplayLogger) {
+                timeDisplayLogger.info('Window state after refresh', {
+                    visible: this.visible,
+                    active: this.active,
+                    opacity: this.opacity,
+                    backOpacity: this.backOpacity,
+                    x: this.x,
+                    y: this.y,
+                    width: this.width,
+                    height: this.height,
+                    parent: this.parent ? 'Scene_Map' : 'none'
+                });
+            }
         }
 
         getFormattedTimeString() {
@@ -270,8 +288,10 @@
             let format = params['Display Format'];
             
             // Safety check for time system
-            if (!$gameHDB || !$gameHDB.time) {
-                this.logger.warn('Time system not available');
+            if (!$gameHDB || !$gameHDB.time || !$gameHDB.time.isReady) {
+                if (timeDisplayLogger) {
+                    timeDisplayLogger.warn('Time system not available or not ready');
+                }
                 return "Time System Not Available";
             }
             
@@ -280,12 +300,16 @@
             
             // Safety check for time data
             if (!timeData) {
-                this.logger.warn('Time data not available');
+                if (timeDisplayLogger) {
+                    timeDisplayLogger.warn('Time data not available');
+                }
                 return "Time Data Not Available";
             }
 
             // Log the time data we're working with
-            this.logger.info('Time data received', timeData);
+            if (timeDisplayLogger) {
+                timeDisplayLogger.info('Time data received', timeData);
+            }
 
             // Ensure all required values exist with defaults
             const values = {
@@ -305,6 +329,10 @@
                 .replace(/{minute}/g, values.minute.toString().padStart(2, '0'));
         }
     }
+
+    // Initialize static properties
+    Window_TimeDisplay.instance = null;
+    Window_TimeDisplay.isInitializing = false;
 
     // Lighting System Class
     class LightingSystem {
@@ -390,11 +418,38 @@
     Scene_Map.prototype.createAllWindows = function() {
         _Scene_Map_createAllWindows.call(this);
         
-        // Create a logger instance for this scene
-        const logger = window.HDB_Logger.forPlugin('HDB_TimeClock_Display');
+        // Wait for time system to be ready
+        if (!$gameHDB || !$gameHDB.time || !$gameHDB.time.isReady) {
+            if (timeDisplayLogger) {
+                timeDisplayLogger.warn('Time system not ready, delaying window creation');
+            }
+            // Try again in a short while
+            setTimeout(() => {
+                if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
+                    this.createTimeDisplayWindow();
+                } else {
+                    if (timeDisplayLogger) {
+                        timeDisplayLogger.error('Time system still not ready after delay');
+                    }
+                }
+            }, 1000);
+            return;
+        }
         
+        this.createTimeDisplayWindow();
+    };
+
+    // Add new method to create time display window
+    Scene_Map.prototype.createTimeDisplayWindow = function() {
         // Create and add the time display window
-        this._timeDisplayWindow = new Window_TimeDisplay();
+        this._timeDisplayWindow = Window_TimeDisplay.getInstance();
+        
+        if (!this._timeDisplayWindow) {
+            if (timeDisplayLogger) {
+                timeDisplayLogger.error('Failed to create time display window');
+            }
+            return;
+        }
         
         // Ensure window is on top and properly positioned
         this._timeDisplayWindow.z = 100;
@@ -403,27 +458,31 @@
         this._timeDisplayWindow.opacity = 255;
         this._timeDisplayWindow.backOpacity = 255;
         
-        // Add to scene
-        this.addChild(this._timeDisplayWindow);
+        // Add to scene if not already added
+        if (!this._timeDisplayWindow.parent) {
+            this.addChild(this._timeDisplayWindow);
+        }
         
         // Force a refresh
         this._timeDisplayWindow.refresh();
         
         // Log only essential information
-        logger.info('Time display window added to scene', {
-            z: this._timeDisplayWindow.z,
-            parent: this._timeDisplayWindow.parent ? 'Scene_Map' : 'none',
-            visible: this._timeDisplayWindow.visible,
-            active: this._timeDisplayWindow.active,
-            opacity: this._timeDisplayWindow.opacity,
-            backOpacity: this._timeDisplayWindow.backOpacity,
-            x: this._timeDisplayWindow.x,
-            y: this._timeDisplayWindow.y,
-            width: this._timeDisplayWindow.width,
-            height: this._timeDisplayWindow.height,
-            screenWidth: Graphics.width,
-            screenHeight: Graphics.height
-        });
+        if (timeDisplayLogger) {
+            timeDisplayLogger.info('Time display window added to scene', {
+                z: this._timeDisplayWindow.z,
+                parent: this._timeDisplayWindow.parent ? 'Scene_Map' : 'none',
+                visible: this._timeDisplayWindow.visible,
+                active: this._timeDisplayWindow.active,
+                opacity: this._timeDisplayWindow.opacity,
+                backOpacity: this._timeDisplayWindow.backOpacity,
+                x: this._timeDisplayWindow.x,
+                y: this._timeDisplayWindow.y,
+                width: this._timeDisplayWindow.width,
+                height: this._timeDisplayWindow.height,
+                screenWidth: Graphics.width,
+                screenHeight: Graphics.height
+            });
+        }
     };
 
     // Update the time display window
@@ -438,8 +497,8 @@
             this._timeDisplayWindow.active = true;
             
             // Log window state periodically
-            if (this._timeDisplayWindow._updateInterval === 60) {
-                this._timeDisplayWindow.logger.info('Window state during update', {
+            if (this._timeDisplayWindow._updateInterval === 60 && timeDisplayLogger) {
+                timeDisplayLogger.info('Window state during update', {
                     visible: this._timeDisplayWindow.visible,
                     active: this._timeDisplayWindow.active,
                     opacity: this._timeDisplayWindow.opacity,
@@ -449,11 +508,14 @@
                     parent: this._timeDisplayWindow.parent ? 'Scene_Map' : 'none'
                 });
             }
+        } else {
+            // Try to recreate window if it's missing
+            this.createTimeDisplayWindow();
         }
     };
 
     // Initialize lighting system
-    if ($gameHDB && $gameHDB.time) {
+    if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
         const lightingSystem = new LightingSystem();
     }
 })(); 

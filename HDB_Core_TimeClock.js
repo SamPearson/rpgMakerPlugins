@@ -59,6 +59,19 @@
  * @desc Starting year
  * @default 1
  * 
+ * @param Logging
+ * @text Logging Configuration
+ * 
+ * @param logLevel
+ * @parent Logging
+ * @type select
+ * @option ERROR
+ * @option WARN
+ * @option INFO
+ * @option DEBUG
+ * @desc Minimum log level to display
+ * @default WARN
+ * 
  * @help This plugin provides core time management functionality for RPG Maker MV.
  * It handles time progression, calendar management, and provides hooks for other
  * systems to react to time changes.
@@ -88,6 +101,14 @@
  */
 
 (function() {
+    console.log('TimeClock plugin starting initialization');
+    
+    // Create global instance immediately
+    if (typeof $gameHDB === 'undefined') {
+        console.log('Creating $gameHDB global instance');
+        $gameHDB = {};
+    }
+
     // Constants
     const HOURS_PER_DAY = 24;
     const MINUTES_PER_HOUR = 60;
@@ -97,6 +118,18 @@
     // Time System Class
     class TimeSystem {
         constructor() {
+            // Prevent multiple instances
+            if (TimeSystem.instance) {
+                return TimeSystem.instance;
+            }
+
+            console.log('TimeSystem constructor called');
+            // Initialize event sets
+            this.onTimeUpdate = new Set();
+            this.onDayChange = new Set();
+            this.onSeasonChange = new Set();
+            this.onYearChange = new Set();
+            
             // Initialize with a temporary logger
             this.logger = {
                 debug: () => {},
@@ -106,77 +139,51 @@
                 group: () => {},
                 groupEnd: () => {}
             };
-
-            // Try to get the real logger if available
-            if (window.HDB_Logger) {
-                console.log('Initializing time system with logger');
-                this.logger = window.HDB_Logger.forPlugin('HDB_Core_TimeClock');
-                // Test the logger
-                this.logger.info('Time system logger initialized');
-            } else {
-                console.warn('Logger not available for time system');
-            }
-
-            // Initialize time tracking
-            this.currentTime = 0;
-            this.lastUpdateTime = Date.now();
-            this.accumulatedMinutes = 0; // Track fractional minutes
-
-            // Load parameters first
-            this.loadParameters();
             
-            // Then initialize the rest
+            // Initialize time system
             this.initialize();
+            
+            // Set the instance
+            TimeSystem.instance = this;
+        }
+
+        static getInstance() {
+            if (!TimeSystem.instance) {
+                if (TimeSystem.isInitializing) {
+                    console.warn('TimeSystem initialization already in progress');
+                    return null;
+                }
+                TimeSystem.isInitializing = true;
+                TimeSystem.instance = new TimeSystem();
+                TimeSystem.isInitializing = false;
+            }
+            return TimeSystem.instance;
         }
 
         initialize() {
             console.log('Initializing time system');
-            this.logger.group('Time System Initialization');
+            // Initialize time tracking
+            this.currentTime = 0;
+            this.currentDay = 1;
+            this.currentSeason = 0;
+            this.currentYear = 1;
+            this.lastUpdateTime = Date.now();
+            this.accumulatedMinutes = 0;
+            this._frameCounter = 0;
+            this._lastUpdateTime = Date.now();
             
-            // Initialize save data
-            if (window.$gameHDB && window.$gameHDB.save) {
-                window.$gameHDB.save.initializePlugin('timeSystem', {
-                    currentTime: 0,
-                    currentDay: 1,
-                    currentSeason: this.startingSeason,
-                    currentYear: this.startingYear,
-                    lastUpdateTime: Date.now(),
-                    totalMenuTime: 0,
-                    menuOpenTime: null
-                });
-
-                // Load saved data
-                const savedData = window.$gameHDB.save.getPluginData('timeSystem');
-                if (savedData) {
-                    // Calculate real time passed since last save
-                    const now = Date.now();
-                    const realTimePassed = now - savedData.lastUpdateTime;
-                    
-                    // Adjust lastUpdateTime to account for real time passed
-                    savedData.lastUpdateTime = now;
-                    
-                    Object.assign(this, savedData);
-                    this.logger.info('Loaded saved time data', {
-                        ...savedData,
-                        realTimePassed,
-                        adjustedLastUpdateTime: now
-                    });
-                }
+            // Set up logger first
+            if (window.HDB_Logger) {
+                this.logger = window.HDB_Logger.forPlugin('HDB_Core_TimeClock');
+                this.logger.info('Time system logger initialized');
             }
-
-            // Initialize event system
-            this.initializeEvents();
-
-            this.logger.info('Time System Initialized', {
-                currentTime: this.currentTime,
-                currentDay: this.currentDay,
-                currentSeason: this.currentSeason,
-                currentYear: this.currentYear,
-                lastUpdateTime: this.lastUpdateTime,
-                timeMultiplier: this.timeMultiplier
-            });
             
-            this.logger.groupEnd();
+            // Load parameters after logger is set up
+            this.loadParameters();
+            
+            // Mark as ready
+            this.isReady = true;
+            console.log('Time system initialization complete');
         }
 
         loadParameters() {
@@ -200,6 +207,13 @@
             this.dayEndHour = Number(params.dayEndHour || 23);
             this.dayStartHour = Number(params.dayStartHour || 6);
             this.isTimePaused = false;
+            
+            // Set log level from parameters
+            const logLevel = params.logLevel || 'WARN';
+            if (this.logger && this.logger.setLogLevel) {
+                this.logger.setLogLevel(logLevel);
+                this.logger.info('Time system log level set to:', logLevel);
+            }
             
             console.log('Time multiplier calculation:', {
                 rawValue: rawRealMinutesPerGameDay,
@@ -229,28 +243,16 @@
             });
         }
 
-        initializeEvents() {
-            this.onTimeUpdate = new Set();
-            this.onDayChange = new Set();
-            this.onSeasonChange = new Set();
-            this.onYearChange = new Set();
-        }
-
         update() {
-            // Log update start
-            this.logger.debug('Time System Update', {
-                currentTime: this.currentTime,
-                lastUpdateTime: this.lastUpdateTime
-            });
-
-            // Update time
-            this.updateTime();
-
-            // Log update end
-            this.logger.debug('Time System Update Complete', {
-                newTime: this.currentTime,
-                newLastUpdateTime: this.lastUpdateTime
-            });
+            // Only update if we've waited at least 1 second since last update
+            const now = Date.now();
+            if (now - this._lastUpdateTime >= 1000) {
+                this._lastUpdateTime = now;
+                this.updateTime();
+                
+                // Force a visual update
+                this.emitTimeUpdate();
+            }
         }
 
         updateTime() {
@@ -266,24 +268,7 @@
                 const newMinutes = (realTimeDiff / 1000) * this.timeMultiplier;
                 this.accumulatedMinutes += newMinutes;
                 
-                this.logger.info('Time Update Start', {
-                    realTimeDiff,
-                    newMinutes,
-                    accumulatedMinutes: this.accumulatedMinutes,
-                    currentTime: this.currentTime,
-                    timeMultiplier: this.timeMultiplier,
-                    lastUpdateTime: this.lastUpdateTime,
-                    now: now,
-                    isPaused: this.isGamePaused(),
-                    calculation: {
-                        realSeconds: realTimeDiff / 1000,
-                        multiplier: this.timeMultiplier,
-                        calculatedMinutes: newMinutes,
-                        accumulatedMinutes: this.accumulatedMinutes
-                    }
-                });
-
-                // Only update actual game time if we have at least 1 full minute
+                // Only log significant time updates (every 5 minutes)
                 if (this.accumulatedMinutes >= 1) {
                     const gameMinutes = Math.floor(this.accumulatedMinutes);
                     this.accumulatedMinutes -= gameMinutes; // Keep the remainder
@@ -312,20 +297,6 @@
                             this.handleDayChange();
                             this._lastDay = this.currentDay;
                         }
-                        
-                        this.logger.info('Time Updated', {
-                            newCurrentTime: this.currentTime,
-                            newLastUpdateTime: this.lastUpdateTime,
-                            currentDay: this.currentDay,
-                            currentSeason: this.currentSeason,
-                            currentYear: this.currentYear,
-                            minutesPerDay,
-                            minutesPerSeason,
-                            minutesPerYear,
-                            totalMinutes,
-                            timeMultiplier: this.timeMultiplier,
-                            accumulatedMinutes: this.accumulatedMinutes
-                        });
                     }
                 }
             }
@@ -346,14 +317,19 @@
             // Calculate current year (1-based)
             const visualYear = Math.floor(totalMinutes / minutesPerYear) + this.startingYear;
 
+            // Calculate current hour and minute
+            const currentDayMinutes = totalMinutes % minutesPerDay;
+            const currentHour = Math.floor(currentDayMinutes / MINUTES_PER_HOUR);
+            const currentMinute = Math.floor(currentDayMinutes % MINUTES_PER_HOUR);
+
             // Emit time update event with visual time
             this.emitTimeUpdate({
                 time: visualTime,
                 day: visualDay,
                 season: visualSeason,
                 year: visualYear,
-                hour: Math.floor((visualTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR),
-                minute: Math.floor(visualTime % MINUTES_PER_HOUR)
+                hour: currentHour,
+                minute: currentMinute
             });
         }
 
@@ -389,15 +365,19 @@
         emitTimeUpdate(timeData) {
             // If no timeData provided, use current game time
             if (!timeData) {
+                const currentTime = this.getCurrentTime();
                 timeData = {
                     time: this.currentTime,
-                    day: this.currentDay,
-                    season: this.currentSeason,
-                    year: this.currentYear,
-                    hour: Math.floor((this.currentTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR),
-                    minute: this.currentTime % MINUTES_PER_HOUR
+                    day: currentTime.day,
+                    season: currentTime.season,
+                    year: currentTime.year,
+                    hour: currentTime.hour,
+                    minute: currentTime.minute
                 };
             }
+            
+            // Log the time update for debugging
+            this.logger.info('Emitting time update', timeData);
             
             this.onTimeUpdate.forEach(callback => callback(timeData));
         }
@@ -617,30 +597,42 @@
         }
     }
 
-    // Create global instance
-    if (typeof $gameHDB === 'undefined') {
-        $gameHDB = {};
-    }
+    // Initialize static properties
+    TimeSystem.instance = null;
+    TimeSystem.isInitializing = false;
+
+    // Initialize time system immediately after class definition
     if (!$gameHDB.time) {
-        $gameHDB.time = new TimeSystem();
+        console.log('Creating new TimeSystem instance');
+        $gameHDB.time = TimeSystem.getInstance();
+        console.log('TimeSystem instance created and attached to $gameHDB');
+    } else {
+        console.log('TimeSystem instance already exists');
     }
 
     // Scene update handling
     const _Scene_Map_update = Scene_Map.prototype.update;
     Scene_Map.prototype.update = function() {
-        _Scene_Map_update.call(this);
-        if ($gameHDB && $gameHDB.time) {
+        if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
             $gameHDB.time.update();
+        } else {
+            // Try to reinitialize if not ready
+            if ($gameHDB && !$gameHDB.time) {
+                console.log('Attempting to reinitialize TimeSystem');
+                $gameHDB.time = TimeSystem.getInstance();
+            }
         }
+        _Scene_Map_update.call(this);
     };
 
     // Ensure time system is initialized before display window
     const _Scene_Map_createDisplayObjects = Scene_Map.prototype.createDisplayObjects;
     Scene_Map.prototype.createDisplayObjects = function() {
-        if ($gameHDB && !$gameHDB.time) {
-            $gameHDB.time = new TimeSystem();
-        }
         _Scene_Map_createDisplayObjects.call(this);
+        // Ensure time system is initialized
+        if (!$gameHDB.time) {
+            $gameHDB.time = TimeSystem.getInstance();
+        }
     };
 
     // Add save/load hooks to DataManager
@@ -694,4 +686,6 @@
         }
         _Scene_Battle_terminate.call(this);
     };
+
+    console.log('TimeClock plugin initialization complete');
 })(); 
