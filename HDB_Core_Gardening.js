@@ -8,7 +8,7 @@
  * @text Plant Database
  * @type struct<PlantData>[]
  * @desc Define plant types and their properties
- * @default [{"id":"carrot","name":"Carrot","type":"standard","stages":3,"daysPerStage":3,"seasons":[0,1,2],"multiHarvest":false},{"id":"potato","name":"Potato","type":"bulb","stages":3,"daysPerStage":4,"seasons":[0,1],"multiHarvest":false},{"id":"morning_glory","name":"Morning Glory","type":"vine","stages":3,"daysPerStage":2,"seasons":[1],"multiHarvest":true,"harvestInterval":3}]
+ * @default [{"id":"carrot","name":"Carrot","type":"standard","stages":3,"daysPerStage":1,"seasons":[0,1,2],"multiHarvest":false},{"id":"potato","name":"Potato","type":"bulb","stages":3,"daysPerStage":1,"seasons":[0,1],"multiHarvest":false},{"id":"morning_glory","name":"Morning Glory","type":"vine","stages":3,"daysPerStage":2,"seasons":[1],"multiHarvest":true,"harvestInterval":3}]
  * 
  * @param Logging
  * @text Logging Configuration
@@ -33,6 +33,7 @@
  * This plugin requires:
  * - HDB_Core_TimeClock.js
  * - HDB_Core_SaveTackOns.js
+ * - YEP_EventSpawner.js
  * 
  * Make sure these plugins are loaded BEFORE this one in the plugin manager.
  * 
@@ -167,6 +168,17 @@
                 fertilized: false,
                 harvestCount: 0
             }
+        },
+        cabbage: {
+            templateName: "CabbagePlant",
+            plantId: "cabbage",
+            initialData: {
+                waterLevel: 50,
+                quality: 1,
+                wateredToday: false,
+                fertilized: false,
+                harvestCount: 0
+            }
         }
         // Add more plant templates here as needed
     };
@@ -174,8 +186,23 @@
     // Plant class to manage individual plant instances
     class Plant {
         constructor(plantData, eventId, isRestored = false) {
-            this.plantData = plantData;
+            // If plantData is a template, extract the actual plant data
+            if (plantData.templateName) {
+                this.plantData = {
+                    id: plantData.plantId,
+                    name: plantData.plantId.charAt(0).toUpperCase() + plantData.plantId.slice(1), // Capitalize first letter
+                    type: "standard",
+                    stages: 3,
+                    daysPerStage: 1,
+                    seasons: [0, 1, 2],
+                    multiHarvest: false
+                };
+            } else {
+                this.plantData = plantData;
+            }
+            
             this.eventId = eventId;
+            this.mapId = $gameMap.mapId(); // Store the map ID where the plant was spawned
             
             // Only set planting time for new plants
             if (!isRestored) {
@@ -208,14 +235,15 @@
             this.lastHarvestDay = null;
             this.harvestCount = 0;
 
-            logger.info(`New plant created: ${plantData.name} (Event ${eventId})`, {
+            logger.info(`New plant created: ${this.plantData.name} (Event ${eventId})`, {
                 isRestored,
                 plantTime: {
                     day: this.plantDay,
                     season: this.plantSeason,
                     year: this.plantYear
                 },
-                currentTime: $gameHDB.time ? $gameHDB.time.getCurrentTime() : null
+                currentTime: $gameHDB.time ? $gameHDB.time.getCurrentTime() : null,
+                plantData: this.plantData
             });
         }
 
@@ -238,15 +266,18 @@
                 this.plantData.stages - 1
             );
 
-            logger.debug(`Plant ${this.plantData.name} (Event ${this.eventId}) update check:`, {
+            // Log every update to track what's happening
+            logger.info(`Plant ${this.plantData.name} (Event ${this.eventId}) update:`, {
                 currentTime,
                 daysSincePlanting,
                 daysPerStage,
                 currentStage: this.growthStage,
                 newStage,
-                plantDay: this.plantDay,
-                plantSeason: this.plantSeason,
-                plantYear: this.plantYear,
+                plantTime: {
+                    day: this.plantDay,
+                    season: this.plantSeason,
+                    year: this.plantYear
+                },
                 calculation: {
                     daysSincePlanting,
                     daysPerStage,
@@ -256,21 +287,8 @@
                 }
             });
 
-            // Only log significant stage changes
+            // Only update if the stage has changed
             if (newStage !== this.growthStage) {
-                logger.info(`Plant ${this.plantData.name} (Event ${this.eventId}) growth stage changed:`, {
-                    oldStage: this.growthStage,
-                    newStage,
-                    daysSincePlanting,
-                    daysPerStage,
-                    calculation: {
-                        daysSincePlanting,
-                        daysPerStage,
-                        division: daysSincePlanting / daysPerStage,
-                        floor: Math.floor(daysSincePlanting / daysPerStage),
-                        min: Math.min(Math.floor(daysSincePlanting / daysPerStage), this.plantData.stages - 1)
-                    }
-                });
                 this.growthStage = newStage;
                 this.onGrowthStageChange();
             }
@@ -281,16 +299,22 @@
             }
             this.wateredToday = false;
 
-            // Check if plant is ready to harvest
-            if (this.isReadyToHarvest(currentTime)) {
-                this.readyToHarvest = true;
-                logger.info(`Plant ${this.plantData.name} (Event ${this.eventId}) is ready to harvest`);
-            }
+            // Update harvest status
+            this.updateHarvestStatus();
         }
 
         isReadyToHarvest(currentTime) {
+            // First check if plant is fully grown
             if (this.growthStage < this.plantData.stages - 1) return false;
             
+            // For carrots and cabbages, require one day in final stage
+            if (this.plantData.id === 'carrot' || this.plantData.id === 'cabbage') {
+                const daysSincePlanting = this.getDaysSincePlanting(currentTime);
+                const daysInFinalStage = daysSincePlanting - (this.plantData.stages - 1) * this.plantData.daysPerStage;
+                return daysInFinalStage >= 1;
+            }
+            
+            // For multi-harvest plants
             if (this.plantData.multiHarvest) {
                 if (!this.lastHarvestDay) return true;
                 const daysSinceLastHarvest = this.getDaysSinceLastHarvest(currentTime);
@@ -306,34 +330,135 @@
         }
 
         getDaysSincePlanting(currentTime) {
-            let days = 0;
-            let currentDay = currentTime.day;
-            let currentSeason = currentTime.season;
-            let currentYear = currentTime.year;
-
             // Calculate total days since planting
-            days = (currentYear - this.plantYear) * 28 * 4 +  // Years
-                  (currentSeason - this.plantSeason) * 28 +  // Seasons
-                  (currentDay - this.plantDay);              // Days
+            const days = (currentTime.year - this.plantYear) * 28 * 4 +  // Years
+                        (currentTime.season - this.plantSeason) * 28 +  // Seasons
+                        (currentTime.day - this.plantDay);              // Days
 
-            logger.debug(`Days since planting calculation for ${this.plantData.name} (Event ${this.eventId}):`, {
+            logger.info(`Days since planting calculation for ${this.plantData.name} (Event ${this.eventId}):`, {
                 currentTime,
                 plantTime: {
                     day: this.plantDay,
                     season: this.plantSeason,
                     year: this.plantYear
                 },
-                calculatedDays: days
+                calculatedDays: days,
+                components: {
+                    years: (currentTime.year - this.plantYear) * 28 * 4,
+                    seasons: (currentTime.season - this.plantSeason) * 28,
+                    days: currentTime.day - this.plantDay
+                }
             });
 
             return days;
         }
 
         onGrowthStageChange() {
-            logger.info(`Plant ${this.plantData.name} (Event ${this.eventId}) grew to stage ${this.growthStage}`);
+            console.log(`Plant ${this.plantData.name} (Event ${this.eventId}) grew to stage ${this.growthStage}`);
+            
+            // Log all events on the map
+            const allEvents = $gameMap.events();
+            console.log('All events on map:', {
+                mapId: $gameMap.mapId(),
+                eventCount: allEvents.length,
+                events: allEvents.map(e => ({
+                    id: e.eventId(),
+                    name: e.event().name,
+                    x: e.x,
+                    y: e.y,
+                    isSpawned: e._spawned,
+                    spawnData: e._spawnData
+                }))
+            });
+            
+            // Use the stored map ID to find the event
             const event = $gameMap.event(this.eventId);
+            
+            // Add detailed logging about event finding
+            console.log(`Attempting to find event ${this.eventId} for growth stage update:`, {
+                mapId: this.mapId,
+                currentMapId: $gameMap.mapId(),
+                eventExists: !!event,
+                event: event ? {
+                    id: event.eventId(),
+                    name: event.event().name,
+                    page: event.page(),
+                    isSpawned: event._spawned,
+                    spawnData: event._spawnData
+                } : null,
+                allEvents: allEvents.map(e => ({
+                    id: e.eventId(),
+                    name: e.event().name,
+                    x: e.x,
+                    y: e.y,
+                    isSpawned: e._spawned,
+                    spawnData: e._spawnData
+                }))
+            });
+
             if (event) {
                 event.requestAnimation([1]);
+                // Update self variable 52 for growth stage using Yanfly's plugin format
+                const key = [this.mapId, this.eventId, 'SELF VARIABLE 52'];
+                console.log(`Attempting to update growth stage self variable:`, {
+                    key,
+                    currentValue: $gameSelfSwitches.value(key),
+                    newValue: this.growthStage,
+                    event: {
+                        id: this.eventId,
+                        name: event.event().name,
+                        mapId: this.mapId
+                    }
+                });
+                
+                $gameSelfSwitches.setValue(key, this.growthStage);
+                
+                // Verify the update
+                const updatedValue = $gameSelfSwitches.value(key);
+                console.log(`Growth stage self variable update result:`, {
+                    key,
+                    expectedValue: this.growthStage,
+                    actualValue: updatedValue,
+                    success: updatedValue === this.growthStage
+                });
+            } else {
+                console.warn(`Could not find event ${this.eventId} for growth stage update on map ${this.mapId}`);
+            }
+        }
+
+        updateHarvestStatus() {
+            const currentTime = $gameHDB.time.getCurrentTime();
+            const isFullyGrown = this.growthStage === this.plantData.stages - 1;
+            const isReadyToHarvest = this.isReadyToHarvest(currentTime);
+            
+            logger.info(`Plant ${this.plantData.name} (Event ${this.eventId}) harvest status update:`, {
+                isFullyGrown,
+                isReadyToHarvest,
+                growthStage: this.growthStage,
+                maxStage: this.plantData.stages - 1,
+                daysSincePlanting: this.getDaysSincePlanting(currentTime),
+                daysPerStage: this.plantData.daysPerStage,
+                multiHarvest: this.plantData.multiHarvest,
+                lastHarvestDay: this.lastHarvestDay,
+                harvestInterval: this.plantData.harvestInterval
+            });
+            
+            // Update self switch for harvest ready status using Yanfly's plugin
+            const event = $gameMap.event(this.eventId);
+            if (event) {
+                const key = [this.mapId, this.eventId, 'SELF SWITCH 22'];
+                $gameSelfSwitches.setValue(key, isReadyToHarvest);
+                
+                // Log the self switch update
+                logger.info(`Updated harvest ready self switch:`, {
+                    key,
+                    value: isReadyToHarvest,
+                    event: {
+                        id: this.eventId,
+                        name: event.event().name,
+                        mapId: this.mapId
+                    }
+                });
             }
         }
 
@@ -360,16 +485,28 @@
         }
 
         harvest() {
-            if (!this.isReadyToHarvest($gameHDB.time.getCurrentTime())) return false;
+            const currentTime = $gameHDB.time.getCurrentTime();
+            if (!this.isReadyToHarvest(currentTime)) {
+                logger.warn(`Plant ${this.plantData.name} (Event ${this.eventId}) not ready to harvest:`, {
+                    growthStage: this.growthStage,
+                    maxStage: this.plantData.stages - 1,
+                    daysSincePlanting: this.getDaysSincePlanting(currentTime),
+                    daysPerStage: this.plantData.daysPerStage,
+                    multiHarvest: this.plantData.multiHarvest,
+                    lastHarvestDay: this.lastHarvestDay,
+                    harvestInterval: this.plantData.harvestInterval
+                });
+                return false;
+            }
             
             const harvestData = {
                 type: this.plantData.id,
                 yield: this.yield,
                 quality: this.quality,
-                daysGrown: this.getDaysSincePlanting($gameHDB.time.getCurrentTime())
+                daysGrown: this.getDaysSincePlanting(currentTime)
             };
 
-            this.lastHarvestDay = this.getDaysSincePlanting($gameHDB.time.getCurrentTime());
+            this.lastHarvestDay = this.getDaysSincePlanting(currentTime);
             this.harvestCount++;
             
             // Reset for next harvest if multi-harvest
@@ -386,63 +523,51 @@
     // Gardening system class
     class GardeningSystem {
         constructor() {
-            this.plantDatabase = this.loadPlantDatabase();
-            this.plantTemplates = PLANT_TEMPLATES;
-            this.plants = new Map(); // Store plant instances
-            
-            // Initialize save system
-            if ($gameHDB && $gameHDB.save) {
-                $gameHDB.save.initializePlugin('gardening', {
-                    plants: []
-                });
-            }
-            
-            logger.info('Gardening system initialized', {
-                plantDatabase: this.plantDatabase,
-                plantTemplates: this.plantTemplates
-            });
+            this.plants = new Map();
+            this.plantTemplates = {};
+            this.initializePlantTemplates();
+            console.log('Time system is ready, gardening system initialized');
         }
 
-        loadPlantDatabase() {
-            const params = PluginManager.parameters('HDB_Core_Gardening');
-            const plantDatabase = JSON.parse(params['Plant Database'] || '[]');
-            logger.info('Loaded plant database', {
-                params,
-                plantDatabase,
-                pluginName: 'HDB_Core_Gardening'
-            });
-            return plantDatabase;
+        initializePlantTemplates() {
+            this.plantTemplates = PLANT_TEMPLATES;
         }
 
         getPlantData(id) {
-            return this.plantDatabase.find(plant => plant.id === id);
+            return this.plantTemplates[id];
         }
 
         getPlant(eventId) {
             // First check if we already have this plant instance
             if (this.plants.has(eventId)) {
-                const plant = this.plants.get(eventId);
+                const plantData = this.plants.get(eventId);
                 logger.info('Retrieved plant from storage', {
                     eventId,
                     plant: {
-                        id: plant.eventId,
-                        name: plant.plantData.name,
-                        plantDay: plant.plantDay,
-                        plantSeason: plant.plantSeason,
-                        plantYear: plant.plantYear
+                        id: plantData.plant.eventId,
+                        name: plantData.plant.plantData.name,
+                        plantDay: plantData.plant.plantDay,
+                        plantSeason: plantData.plant.plantSeason,
+                        plantYear: plantData.plant.plantYear
                     }
                 });
-                return plant;
+                return plantData.plant;
             }
             logger.warn('No plant found for event ID', { eventId });
             return null;
         }
 
-        updatePlants() {
-            // Update all plants in our Map
-            this.plants.forEach((plant, eventId) => {
-                plant.update();
-            });
+        updatePlantsForCurrentMap() {
+            const currentMapId = $gameMap.mapId();
+            logger.info(`Updating plants for map ${currentMapId}`);
+            
+            // Only process plants that are on the current map
+            for (const [eventId, plantData] of this.plants) {
+                if (plantData.mapId === currentMapId) {
+                    logger.info(`Processing plant ${plantData.plant.plantData.name} (Event ${eventId}) on map ${currentMapId}`);
+                    plantData.plant.update();
+                }
+            }
         }
 
         spawnPlant(templateId, x, y) {
@@ -501,37 +626,26 @@
                 const actualEventId = spawnedEvent.eventId();
                 console.log(`Event spawned with ID: ${actualEventId}`);
 
-                // Get the plant data from our database
-                const plantData = this.getPlantData(template.plantId);
-                if (!plantData) {
-                    console.error(`Failed to get plant data for ${template.plantId}`, {
-                        plantDatabase: this.plantDatabase,
-                        templateId,
-                        template
-                    });
-                    return null;
-                }
-
-                // Create a deep copy of the plant data to ensure each plant has its own unique data
-                const uniquePlantData = JSON.parse(JSON.stringify(plantData));
-
                 // Create and store the plant instance
-                const plant = new Plant(uniquePlantData, actualEventId);
-                this.plants.set(actualEventId, plant);
+                const plant = new Plant(template, actualEventId);
+                this.plants.set(actualEventId, {
+                    plant,
+                    mapId: $gameMap.mapId()
+                });
+
+                // Log the current state of all plants
+                const plantLogs = Array.from(this.plants.entries()).map(([id, data]) => ({
+                    id,
+                    name: data.plant.plantData.name,
+                    mapId: data.mapId,
+                    growthStage: data.plant.growthStage
+                }));
 
                 console.log(`Successfully created plant for event ${actualEventId}`, {
                     eventId: actualEventId,
                     plantId: template.plantId,
                     plant: plant,
-                    currentPlants: Array.from(this.plants.entries()).map(([id, plant]) => ({
-                        id,
-                        name: plant.plantData.name,
-                        plantTime: {
-                            day: plant.plantDay,
-                            season: plant.plantSeason,
-                            year: plant.plantYear
-                        }
-                    }))
+                    currentPlants: plantLogs
                 });
 
                 return actualEventId;
@@ -633,6 +747,16 @@
             // Clear pending plants
             this._pendingPlants = null;
         }
+
+        setupMap() {
+            console.log(`Setting up map ${$gameMap.mapId()}:`, {
+                events: $gameMap.events().map(e => ({
+                    id: e.eventId(),
+                    name: e.event().name
+                }))
+            });
+            this.updatePlantsForCurrentMap();
+        }
     }
 
     // Create global instance
@@ -667,39 +791,31 @@
     // Scene update handling
     const _Scene_Map_update = Scene_Map.prototype.update;
     Scene_Map.prototype.update = function() {
-        // Update time system first if it exists and is ready
-        if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
-            $gameHDB.time.update();
-        }
-        
-        // Then update gardening system if it exists
-        if ($gameHDB && $gameHDB.gardening) {
-            $gameHDB.gardening.updatePlants();
-        }
-        
         _Scene_Map_update.call(this);
+        
+        // Update time system if it exists and is ready
+        if ($gameHDB.time && $gameHDB.time.isReady) {
+            $gameHDB.time.update();
+            
+            // Update plants after time system update
+            if ($gameHDB.gardening) {
+                $gameHDB.gardening.updatePlantsForCurrentMap();
+            }
+        }
     };
 
-    // Add map change handling
-    const _Game_Map_setup = Game_Map.prototype.setup;
-    Game_Map.prototype.setup = function(mapId) {
-        _Game_Map_setup.call(this, mapId);
-        if ($gameHDB && $gameHDB.gardening) {
-            // Load plant data first
-            $gameHDB.gardening.updatePlants();
-            
-            // Then update all plants to their current state
-            $gameHDB.gardening.updatePlants();
-            
-            // Log the current state of all plants
-            console.log('Map setup complete, current plants:', 
-                Array.from($gameHDB.gardening.plants.entries()).map(([eventId, plant]) => ({
-                    eventId,
-                    name: plant.plantData.name,
-                    stage: plant.growthStage,
-                    waterLevel: plant.waterLevel
+    // Map setup
+    const _Scene_Map_setup = Scene_Map.prototype.setup;
+    Scene_Map.prototype.setup = function() {
+        _Scene_Map_setup.call(this);
+        if ($gameHDB.gardening) {
+            console.log(`Setting up map ${$gameMap.mapId()}:`, {
+                events: $gameMap.events().map(e => ({
+                    id: e.eventId(),
+                    name: e.event().name
                 }))
-            );
+            });
+            $gameHDB.gardening.setupMap();
         }
     };
 
@@ -723,8 +839,13 @@
                 hasTimeSystem: !!($gameHDB && $gameHDB.time),
                 isTimeSystemReady: !!($gameHDB && $gameHDB.time && $gameHDB.time.isReady),
                 hasGardeningSystem: !!($gameHDB && $gameHDB.gardening),
-                plantDatabase: $gameHDB.gardening ? $gameHDB.gardening.plantDatabase : null,
-                plantTemplates: $gameHDB.gardening ? $gameHDB.gardening.plantTemplates : null
+                plantTemplates: $gameHDB.gardening ? $gameHDB.gardening.plantTemplates : null,
+                currentPlants: $gameHDB.gardening ? Array.from($gameHDB.gardening.plants.entries()).map(([id, data]) => ({
+                    id,
+                    name: data && data.plant && data.plant.plantData ? data.plant.plantData.name : 'Unknown',
+                    mapId: data ? data.mapId : 'Unknown',
+                    growthStage: data && data.plant ? data.plant.growthStage : 0
+                })) : null
             });
             
             // Ensure time system is ready
@@ -765,12 +886,13 @@
                     logger.info('Checking plant status', {
                         statusEventId,
                         event: $gameMap.event(statusEventId),
-                        plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, plant]) => ({
+                        plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, data]) => ({
                             id,
-                            name: plant.plantData.name,
-                            plantDay: plant.plantDay,
-                            plantSeason: plant.plantSeason,
-                            plantYear: plant.plantYear
+                            name: data && data.plant && data.plant.plantData ? data.plant.plantData.name : 'Unknown',
+                            plantDay: data && data.plant ? data.plant.plantDay : 0,
+                            plantSeason: data && data.plant ? data.plant.plantSeason : 0,
+                            plantYear: data && data.plant ? data.plant.plantYear : 0,
+                            mapId: data ? data.mapId : 'Unknown'
                         }))
                     });
                     
@@ -791,17 +913,22 @@
                             }
                         });
                         
-                        // Format the planting date using the plant's actual planting date
-                        const plantingDate = `Year ${statusPlant.plantYear}, ${['Spring', 'Summer', 'Fall', 'Winter'][statusPlant.plantSeason]} ${statusPlant.plantDay}`;
-                        
                         // Calculate age in days
                         const currentTime = $gameHDB.time.getCurrentTime();
                         const ageInDays = statusPlant.getDaysSincePlanting(currentTime);
                         
+                        // Get the growth stage self variable value
+                        const growthStageSelfValue = $gameSelfSwitches.value([$gameMap.mapId(), statusEventId, 'SELF VARIABLE 52']);
+                        const gardenTestSelfValue = $gameSelfSwitches.value([$gameMap.mapId(), statusEventId, 'SELF VARIABLE 57']);
+                        const harvestReadyValue = $gameSelfSwitches.value([$gameMap.mapId(), statusEventId, 'Self Switch harvestReady']);
+                        
                         const status = `Plant: ${statusPlant.plantData.name}
-Planted: ${plantingDate}
+Planted: ${['Spring', 'Summer', 'Fall', 'Winter'][statusPlant.plantSeason]} ${statusPlant.plantDay}
 Age: ${ageInDays} days
 Stage: ${statusPlant.growthStage + 1}/${statusPlant.plantData.stages}
+Growth Stage (Self): ${growthStageSelfValue}
+Garden Test (Self): ${gardenTestSelfValue}
+Harvest Ready (Self): ${harvestReadyValue}
 Water: ${statusPlant.waterLevel}%
 Quality: ${statusPlant.quality}
 Yield: ${statusPlant.yield}
@@ -810,7 +937,7 @@ Harvests: ${statusPlant.harvestCount}`;
                         // Log the final status message
                         logger.info('Final status message', {
                             eventId: statusEventId,
-                            plantingDate,
+                            plantingDate: `Year ${statusPlant.plantYear}, ${['Spring', 'Summer', 'Fall', 'Winter'][statusPlant.plantSeason]} ${statusPlant.plantDay}`,
                             ageInDays,
                             status
                         });
@@ -820,12 +947,13 @@ Harvests: ${statusPlant.harvestCount}`;
                         logger.warn('No plant found for status display', {
                             statusEventId,
                             event: $gameMap.event(statusEventId),
-                            plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, plant]) => ({
+                            plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, data]) => ({
                                 id,
-                                name: plant.plantData.name,
-                                plantDay: plant.plantDay,
-                                plantSeason: plant.plantSeason,
-                                plantYear: plant.plantYear
+                                name: data && data.plant && data.plant.plantData ? data.plant.plantData.name : 'Unknown',
+                                plantDay: data && data.plant ? data.plant.plantDay : 0,
+                                plantSeason: data && data.plant ? data.plant.plantSeason : 0,
+                                plantYear: data && data.plant ? data.plant.plantYear : 0,
+                                mapId: data ? data.mapId : 'Unknown'
                             }))
                         });
                         $gameMessage.add('No plant found at this location.');
@@ -868,17 +996,57 @@ Harvests: ${statusPlant.harvestCount}`;
                     
                 case 'HARVEST':
                     if (plant) {
-                        if (this.isReadyToHarvest(plant)) {
-                            const harvestData = this.harvest(plant);
+                        const currentTime = $gameHDB.time.getCurrentTime();
+                        logger.info(`Attempting to harvest plant ${plant.plantData.name} (Event ${eventId}):`, {
+                            growthStage: plant.growthStage,
+                            maxStage: plant.plantData.stages - 1,
+                            daysSincePlanting: plant.getDaysSincePlanting(currentTime),
+                            daysPerStage: plant.plantData.daysPerStage,
+                            multiHarvest: plant.plantData.multiHarvest,
+                            lastHarvestDay: plant.lastHarvestDay,
+                            harvestInterval: plant.plantData.harvestInterval
+                        });
+
+                        if (plant.isReadyToHarvest(currentTime)) {
+                            const harvestData = plant.harvest();
                             $gameMap.event(eventId).requestAnimation([4]);
-                            // Give harvest items
-                            $gameParty.gainItem($dataItems[102], harvestData.yield);
+                            
+                            // Give harvest items based on plant type
+                            let itemId;
+                            switch (plant.plantData.id) {
+                                case 'carrot':
+                                    itemId = 102; // Carrot item
+                                    break;
+                                case 'cabbage':
+                                    itemId = 104; // Cabbage item
+                                    break;
+                                default:
+                                    itemId = 102; // Default to carrot if unknown
+                            }
+                            
+                            $gameParty.gainItem($dataItems[itemId], harvestData.yield);
+                            
+                            logger.info(`Successfully harvested plant:`, {
+                                eventId,
+                                itemId,
+                                yield: harvestData.yield,
+                                harvestData,
+                                plantType: plant.plantData.id
+                            });
+                            
                             $gameMessage.add(`Harvested ${harvestData.yield} ${plant.plantData.name}(s)!`);
                             
                             if (!plant.plantData.multiHarvest) {
                                 $gameMap.event(eventId).erase();
                             }
                         } else {
+                            logger.warn(`Plant not ready to harvest:`, {
+                                eventId,
+                                growthStage: plant.growthStage,
+                                maxStage: plant.plantData.stages - 1,
+                                daysSincePlanting: plant.getDaysSincePlanting(currentTime),
+                                daysPerStage: plant.plantData.daysPerStage
+                            });
                             $gameMessage.add(`${plant.plantData.name} is not ready to harvest.`);
                         }
                     } else {
@@ -904,10 +1072,14 @@ Harvests: ${statusPlant.harvestCount}`;
                             console.log(`Successfully spawned plant ${args[1]}`, { 
                                 spawnedEventId,
                                 event: $gameMap.event(spawnedEventId),
-                                plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, plant]) => ({
-                                    id,
-                                    name: plant.plantData.name
-                                }))
+                                plants: Array.from($gameHDB.gardening.plants.entries()).map(([id, data]) => {
+                                    // Safe access to plant data with fallbacks
+                                    return {
+                                        id,
+                                        name: data && data.plant && data.plant.plantData ? data.plant.plantData.name : 'Unknown',
+                                        mapId: data ? data.mapId : 'Unknown'
+                                    };
+                                })
                             });
                             // Store the spawned event ID for future reference
                             $gameVariables.setValue(1, spawnedEventId); // Using variable 1 to store the last planted event ID
@@ -941,4 +1113,9 @@ Harvests: ${statusPlant.harvestCount}`;
             $gameHDB.gardening.loadData();
         }
     };
+
+    // Check for Yanfly's EventSpawner plugin after all plugins are loaded
+    if (typeof Yanfly === 'undefined' || typeof Yanfly.SpawnEventTemplateAt !== 'function') {
+        console.error('Yanfly EventSpawner plugin not found. Please ensure it is loaded before the gardening plugin.');
+    }
 })(); 
