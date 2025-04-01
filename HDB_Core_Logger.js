@@ -18,7 +18,7 @@
  * @option ERROR
  * @default INFO
  * 
- * // Initialize logger for your plugin
+ * // Initialize logger for your plugin (near the top of your plugin file, before calling the logger)
  * const logger = window.HDB_Logger.forPlugin('HDB_YourPlugin', PluginManager.parameters('HDB_YourPlugin').logLevel);
  * 
  * // Log messages
@@ -26,6 +26,10 @@
  * logger.log('INFO', 'Normal information');
  * logger.log('WARN', 'Warning message');
  * logger.log('ERROR', 'Error occurred');
+ * 
+ * 
+ * While running the game, logs will be produced in the console 
+ * for all messages at or above the selected level.
  */
 
 (function() {
