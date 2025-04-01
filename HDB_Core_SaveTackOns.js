@@ -4,6 +4,19 @@
  * 
  * @target MV
  * 
+ * @param Logging
+ * @text Logging Configuration
+ * 
+ * @param logLevel
+ * @parent Logging
+ * @type select
+ * @option ERROR
+ * @option WARN
+ * @option INFO
+ * @option DEBUG
+ * @desc Minimum log level to display
+ * @default INFO
+ *  
  * @help This plugin provides a centralized save system for all HDB plugins.
  * It handles data persistence, versioning, and migration.
  * 
