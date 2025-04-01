@@ -132,12 +132,7 @@
             
             // Initialize with a temporary logger
             this.logger = {
-                debug: () => {},
-                info: () => {},
-                warn: () => {},
-                error: () => {},
-                group: () => {},
-                groupEnd: () => {}
+                log: () => {}
             };
             
             // Initialize time system
@@ -172,13 +167,17 @@
             this._frameCounter = 0;
             this._lastUpdateTime = Date.now();
             
-            // Set up logger first
+            // Load parameters first to get log level
+            const params = PluginManager.parameters('HDB_Core_TimeClock');
+            const logLevel = params.logLevel || 'ERROR';
+            
+            // Set up logger with correct log level
             if (window.HDB_Logger) {
-                this.logger = window.HDB_Logger.forPlugin('HDB_Core_TimeClock');
-                this.logger.info('Time system logger initialized');
+                this.logger = window.HDB_Logger.forPlugin('HDB_Core_TimeClock', logLevel);
+                this.logger.log('INFO', 'Time system logger initialized with level: ' + logLevel);
             }
             
-            // Load parameters after logger is set up
+            // Load remaining parameters
             this.loadParameters();
             
             // Mark as ready
@@ -208,13 +207,6 @@
             this.dayStartHour = Number(params.dayStartHour || 6);
             this.isTimePaused = false;
             
-            // Set log level from parameters
-            const logLevel = params.logLevel || 'WARN';
-            if (this.logger && this.logger.setLogLevel) {
-                this.logger.setLogLevel(logLevel);
-                this.logger.info('Time system log level set to:', logLevel);
-            }
-            
             console.log('Time multiplier calculation:', {
                 rawValue: rawRealMinutesPerGameDay,
                 parsedValue: realMinutesPerGameDay,
@@ -231,7 +223,7 @@
             this.startingSeason = Number(params.startingSeason || 0);
             this.startingYear = Number(params.startingYear || 1);
             
-            this.logger.info('Time System Parameters', {
+            this.logger.log('INFO', 'Time System Parameters: ' + JSON.stringify({
                 realMinutesPerGameDay,
                 timeMultiplier: this.timeMultiplier,
                 dayEndHour: this.dayEndHour,
@@ -240,7 +232,7 @@
                 startingSeason: this.startingSeason,
                 startingYear: this.startingYear,
                 rawParams: params
-            });
+            }));
         }
 
         update() {
@@ -377,7 +369,7 @@
             }
             
             // Log the time update for debugging
-            this.logger.info('Emitting time update', timeData);
+            this.logger.log('INFO', 'Emitting time update: ' + JSON.stringify(timeData));
             
             this.onTimeUpdate.forEach(callback => callback(timeData));
         }
@@ -415,7 +407,7 @@
                     menuOpenTime: this.menuOpenTime
                 };
                 window.$gameHDB.save.setPluginData('timeSystem', timeData);
-                this.logger.info('Saved time data', timeData);
+                this.logger.log('INFO', 'Saved time data: ' + JSON.stringify(timeData));
             }
         }
 
@@ -424,7 +416,7 @@
                 const savedData = window.$gameHDB.save.getPluginData('timeSystem');
                 if (savedData) {
                     Object.assign(this, savedData);
-                    this.logger.info('Loaded time data', savedData);
+                    this.logger.log('INFO', 'Loaded time data: ' + JSON.stringify(savedData));
                 }
             }
         }
@@ -450,13 +442,7 @@
             const hour = Math.floor(currentDayMinutes / MINUTES_PER_HOUR);
             const minute = currentDayMinutes % MINUTES_PER_HOUR;
 
-            this.logger.debug('Time Calculation', {
-                totalMinutes,
-                minutesPerDay,
-                currentDayMinutes,
-                hour,
-                minute
-            });
+            this.logger.log('INFO', 'Time Calculation: totalMinutes=' + totalMinutes + ', minutesPerDay=' + minutesPerDay + ', currentDayMinutes=' + currentDayMinutes + ', hour=' + hour + ', minute=' + minute);
 
             return {
                 year: this.currentYear,
@@ -481,14 +467,7 @@
             
             const daysSince = currentTotalDays - startTotalDays;
             
-            this.logger.debug('Days Since Calculation', {
-                startDay,
-                startSeason,
-                startYear,
-                currentTotalDays,
-                startTotalDays,
-                daysSince
-            });
+            this.logger.log('INFO', 'Days Since Calculation: startDay=' + startDay + ', startSeason=' + startSeason + ', startYear=' + startYear + ', currentTotalDays=' + currentTotalDays + ', startTotalDays=' + startTotalDays + ', daysSince=' + daysSince);
             
             return daysSince;
         }
@@ -512,7 +491,7 @@
         // Add menu tracking methods
         onMenuOpen() {
             this.menuOpenTime = Date.now();
-            this.logger.info('Menu opened', { menuOpenTime: this.menuOpenTime });
+            this.logger.log('INFO', 'Menu opened: menuOpenTime=' + this.menuOpenTime);
         }
 
         onMenuClose() {
@@ -521,11 +500,7 @@
                 this.totalMenuTime = (this.totalMenuTime || 0) + menuDuration;
                 this.lastUpdateTime += menuDuration; // Adjust lastUpdateTime to account for menu time
                 this.menuOpenTime = null;
-                this.logger.info('Menu closed', {
-                    menuDuration,
-                    totalMenuTime: this.totalMenuTime,
-                    adjustedLastUpdateTime: this.lastUpdateTime
-                });
+                this.logger.log('INFO', 'Menu closed: menuDuration=' + menuDuration + ', totalMenuTime=' + this.totalMenuTime + ', adjustedLastUpdateTime=' + this.lastUpdateTime);
             }
         }
 
@@ -549,15 +524,12 @@
 
         pauseTime() {
             this.isTimePaused = true;
-            this.logger.info('Time paused', { 
-                currentTime: this.currentTime,
-                currentHour: Math.floor((this.currentTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR)
-            });
+            this.logger.log('INFO', 'Time paused: currentTime=' + this.currentTime + ', currentHour=' + Math.floor((this.currentTime % (HOURS_PER_DAY * MINUTES_PER_HOUR)) / MINUTES_PER_HOUR));
         }
 
         resumeTime() {
             this.isTimePaused = false;
-            this.logger.info('Time resumed');
+            this.logger.log('INFO', 'Time resumed');
         }
 
         sleepUntilNextDay() {
@@ -583,13 +555,7 @@
             // Resume time
             this.resumeTime();
 
-            this.logger.info('Slept until next day', {
-                minutesAdvanced: minutesToNextDay,
-                newDay: this.currentDay,
-                newHour: this.dayStartHour,
-                newSeason: this.currentSeason,
-                newYear: this.currentYear
-            });
+            this.logger.log('INFO', 'Slept until next day: minutesAdvanced=' + minutesToNextDay + ', newDay=' + this.currentDay + ', newHour=' + this.dayStartHour + ', newSeason=' + this.currentSeason + ', newYear=' + this.currentYear);
 
             // Emit events
             this.handleDayChange();

@@ -63,7 +63,12 @@
  * $gameHDB.save.onLoad = function() { ... };
  */
 
+let logger = null;
+
 (function() {
+    // Initialize logger near the start of your IIFE
+    logger = window.HDB_Logger ? window.HDB_Logger.createLogger('HDB_Core_SaveTackOns') : { log: () => {} };
+
     // Create save system object with all methods
     const createSaveSystem = () => ({
         version: "1.0.0",
