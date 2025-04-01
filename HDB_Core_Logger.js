@@ -21,6 +21,9 @@
  * // Initialize logger for your plugin (near the top of your plugin file, before calling the logger)
  * const logger = window.HDB_Logger.forPlugin('HDB_YourPlugin', PluginManager.parameters('HDB_YourPlugin').logLevel);
  * 
+ * // Or use the simpler factory method:
+ * const logger = window.HDB_Logger.createLogger('HDB_YourPlugin');
+ * 
  * // Log messages
  * logger.log('DEBUG', 'Detailed information');
  * logger.log('INFO', 'Normal information');
@@ -59,10 +62,30 @@
         }
     }
 
+    // Factory function for creating loggers with less boilerplate
+    function createLoggerForPlugin(pluginName) {
+        try {
+            const params = PluginManager.parameters(pluginName);
+            const logLevel = params.logLevel || 'INFO';
+            
+            const logger = new Logger(pluginName, logLevel);
+            logger.log('INFO', `Logger initialized with level: ${logLevel}`);
+            return logger;
+        } catch (e) {
+            console.warn(`Failed to create logger for ${pluginName}: ${e.message}`);
+            // Return dummy logger that does nothing
+            return {
+                log: () => {}
+            };
+        }
+    }
+
     // Initialize global state
     window.HDB_Logger = {
         forPlugin: function(pluginName, logLevel) {
             return new Logger(pluginName, logLevel);
-        }
+        },
+        // New factory method
+        createLogger: createLoggerForPlugin
     };
 })(); 
