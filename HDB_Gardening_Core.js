@@ -31,8 +31,8 @@
  * =============================================================================
  * 
  * This plugin requires:
- * - HDB_Core_TimeClock.js
- * - HDB_Core_SaveTackOns.js
+ * - HDB_TimeClock_Core.js
+ * - HDB_SaveTackOns_Core.js
  * - YEP_EventSpawner.js
  * 
  * Make sure these plugins are loaded BEFORE this one in the plugin manager.
@@ -138,7 +138,7 @@
  */
 
 (function() {
-    let logger = window.HDB_Logger ? window.HDB_Logger.createLogger('HDB_Core_Gardening') : { log: () => {} };
+    let logger = window.HDB_Logger ? window.HDB_Logger.createLogger('HDB_Gardening_Core') : { log: () => {} };
 
     // Plant templates for spawning
     const PLANT_TEMPLATES = {

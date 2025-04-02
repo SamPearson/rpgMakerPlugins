@@ -1,6 +1,8 @@
 /*:
- * @plugindesc v1.0.0 Logging System Core for HDB plugins
+ * @plugindesc v1.0.0_beta Logging System for RPG Maker MV
  * @author HDB & Associates
+ * 
+ * @target MV
  * 
  * @help
  * HDB_Core_Logger.js

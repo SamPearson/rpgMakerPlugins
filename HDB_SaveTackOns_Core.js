@@ -67,7 +67,7 @@ let logger = null;
 
 (function() {
     // Initialize logger near the start of your IIFE
-    logger = window.HDB_Logger ? window.HDB_Logger.createLogger('HDB_Core_SaveTackOns') : { log: () => {} };
+    logger = window.HDB_Logger ? window.HDB_Logger.createLogger('HDB_SaveTackOns_Core') : { log: () => {} };
 
     // Version management
     const Version = {
