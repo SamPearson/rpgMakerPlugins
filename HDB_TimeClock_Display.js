@@ -73,7 +73,7 @@
  * Plugin Dependencies
  * =============================================================================
  * 
- * This plugin requires HDB_Core_TimeClock.js to be loaded first.
+ * This plugin requires HDB_TimeClock_Core.js to be loaded first.
  * 
  * =============================================================================
  * Window Position

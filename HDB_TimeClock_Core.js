@@ -168,12 +168,12 @@
             this._lastUpdateTime = Date.now();
             
             // Load parameters first to get log level
-            const params = PluginManager.parameters('HDB_Core_TimeClock');
+            const params = PluginManager.parameters('HDB_TimeClock_Core');
             const logLevel = params.logLevel || 'ERROR';
             
             // Set up logger with correct log level
             if (window.HDB_Logger) {
-                this.logger = window.HDB_Logger.forPlugin('HDB_Core_TimeClock', logLevel);
+                this.logger = window.HDB_Logger.forPlugin('HDB_TimeClock_Core', logLevel);
                 this.logger.log('INFO', 'Time system logger initialized with level: ' + logLevel);
             }
             
@@ -186,7 +186,7 @@
         }
 
         loadParameters() {
-            const params = PluginManager.parameters('HDB_Core_TimeClock');
+            const params = PluginManager.parameters('HDB_TimeClock_Core');
             console.log('Raw plugin parameters:', params); // Debug log
             
             // Parse real minutes per game day with explicit type conversion and default value
