@@ -230,7 +230,11 @@
         getFormattedTimeString() {
             // Check if time system is available and ready
             if (!$gameHDB || !$gameHDB.time || !$gameHDB.time.isReady) {
-                timeDisplayLogger.log('WARN', 'Time system not available or not ready');
+                timeDisplayLogger.log('WARN', 'Time system not available or not ready', {
+                    hasGameHDB: !!$gameHDB,
+                    hasTimeSystem: !!($gameHDB && $gameHDB.time),
+                    isTimeSystemReady: !!($gameHDB && $gameHDB.time && $gameHDB.time.isReady)
+                });
                 return 'Time System Not Ready';
             }
 
@@ -256,21 +260,6 @@
         }
     }
 
-    // Scene_Map extension
-    const _Scene_Map_createDisplayObjects = Scene_Map.prototype.createDisplayObjects;
-    Scene_Map.prototype.createDisplayObjects = function() {
-        _Scene_Map_createDisplayObjects.call(this);
-        
-        // Create time display window
-        this._timeWindow = new Window_TimeDisplay();
-        this.addWindow(this._timeWindow);
-    };
-
-    // Initialize lighting system if needed
-    if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
-        const lightingSystem = new LightingSystem();
-    }
-
     // Lighting System Class
     class LightingSystem {
         constructor() {
@@ -292,63 +281,42 @@
 
         updateLighting(timeData) {
             if (!$gameParty.inBattle() && !$gameSwitches.value(this.manualLightingSwitch)) {
+                // Update lighting based on time
+                const hour = timeData.hour;
+                const isNight = hour < 6 || hour >= 18;
+                
                 if (this.useLighting) {
-                    this.updateScreenLighting(timeData.hour);
-                }
-            } else {
-                $gameScreen.startTint(LIGHTING_LEVELS.NORMAL, 1);
-            }
-        }
-
-        updateScreenLighting(hour) {
-            const isOutside = $gameSwitches.value(this.outsideSwitch);
-            const lightsOn = $gameSwitches.value(this.lightsSwitch);
-
-            if (isOutside) {
-                this.updateOutdoorLighting(hour);
-            } else {
-                this.updateIndoorLighting(hour, lightsOn);
-            }
-        }
-
-        updateOutdoorLighting(hour) {
-            if (hour < 5) {
-                $gameScreen.startTint(LIGHTING_LEVELS.DARK, 5);
-            } else if (hour < 6) {
-                $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-            } else if (hour < 7) {
-                $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-            } else if (hour < 17) {
-                $gameScreen.startTint(LIGHTING_LEVELS.NORMAL, 5);
-            } else if (hour < 18) {
-                $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-            } else if (hour < 19) {
-                $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-            } else {
-                $gameScreen.startTint(LIGHTING_LEVELS.DARK, 5);
-            }
-        }
-
-        updateIndoorLighting(hour, lightsOn) {
-            if (lightsOn) {
-                $gameScreen.startTint(LIGHTING_LEVELS.NORMAL, 1);
-            } else {
-                if (hour < 5) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DARK, 5);
-                } else if (hour < 6) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-                } else if (hour < 7) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-                } else if (hour < 17) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.INDOOR_DARK, 5);
-                } else if (hour < 18) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-                } else if (hour < 19) {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DUSK_DAWN, 5);
-                } else {
-                    $gameScreen.startTint(LIGHTING_LEVELS.DARK, 5);
+                    if ($gameSwitches.value(this.outsideSwitch)) {
+                        // Outside lighting
+                        if (isNight) {
+                            $gameScreen.setTone([-100, -100, -100, 0]);
+                        } else {
+                            $gameScreen.setTone([0, 0, 0, 0]);
+                        }
+                    } else if ($gameSwitches.value(this.lightsSwitch)) {
+                        // Indoor lighting
+                        if (isNight) {
+                            $gameScreen.setTone([50, 50, 0, 0]);
+                        } else {
+                            $gameScreen.setTone([0, 0, 0, 0]);
+                        }
+                    }
                 }
             }
         }
     }
+
+    const _Scene_Map_createDisplayObjects = Scene_Map.prototype.createDisplayObjects;
+    Scene_Map.prototype.createDisplayObjects = function() {
+        _Scene_Map_createDisplayObjects.call(this);
+        
+        // Create time display window
+        this._timeWindow = new Window_TimeDisplay();
+        this.addWindow(this._timeWindow);
+
+        // Initialize lighting system if needed
+        if ($gameHDB && $gameHDB.time && $gameHDB.time.isReady) {
+            this._lightingSystem = new LightingSystem();
+        }
+    };
 })(); 
