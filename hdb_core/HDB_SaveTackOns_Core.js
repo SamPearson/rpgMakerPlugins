@@ -1,3 +1,4 @@
+/// <reference path="./rpg-maker-mv-docs.d.ts" />
 /*:
  * @plugindesc v1.0.0_beta Save System Core for HDB plugins
  * @author HDB & Associates

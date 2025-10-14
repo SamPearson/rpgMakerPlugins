@@ -1,3 +1,4 @@
+/// <reference path="./rpg-maker-mv-docs.d.ts" />
 /*:
  * @plugindesc v1.0.0_beta Logging System for RPG Maker MV
  * @author HDB & Associates
